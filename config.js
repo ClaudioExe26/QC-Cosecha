@@ -34,6 +34,16 @@ export const VARIEDADES = [
   "Skeena", "Royal Dawn", "Kordia", "Bing", "Sweetheart"
 ];
 
+// Huertos / cuarteles por productor. Si un productor está aquí, el evaluador
+// debe elegir uno de la lista (no puede escribir otro). Si no está, lo escribe a mano.
+export const HUERTOS = {
+  "Diego Pacheco Álvarez": ["Placilla", "Polonia", "Taitao", "Taitao Lapins", "Las Parcelas"]
+};
+
+// Período de cosecha que usa el botón "Temporada" y el filtro inicial de los resúmenes (mes-día).
+// Si el fin es anterior al inicio (ej. inicio "10-31", fin "01-15"), se toma como enero del año siguiente.
+export const TEMPORADA = { inicio: "10-31", fin: "12-31" };
+
 export const DEFECTOS = [
   "Pitting", "Machucón", "Sin pedicelo", "Picada de pájaro",
   "Falta de color", "Precalibre", "Partidura", "Frutos dobles"

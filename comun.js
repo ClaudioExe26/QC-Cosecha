@@ -1,5 +1,5 @@
 // Funciones compartidas por las tres páginas de QC Cosecha
-import { firebaseConfig, ADMINS } from "./config.js";
+import { firebaseConfig, ADMINS, TEMPORADA } from "./config.js";
 
 export const COLECCION = "qc_muestras";
 export const $ = id => document.getElementById(id);
@@ -13,7 +13,15 @@ export function toast(m, ms = 2800) {
 export function today() { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }
 export function addDays(s, n) { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 export function nowTime() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
-export function temporadaInicio() { const d = new Date(); const y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1; return `${y}-07-01`; }
+// Rango de la temporada de cosecha actual según TEMPORADA en config.js
+export function temporadaRango() {
+  const d = new Date(); const y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1; // la temporada parte en julio
+  const ini = TEMPORADA.inicio, fin = TEMPORADA.fin;
+  const yIni = ini >= "07-01" ? y : y + 1;
+  const desde = `${yIni}-${ini}`;
+  let hasta = `${yIni}-${fin}`; if (hasta < desde) hasta = `${yIni + 1}-${fin}`;
+  return { desde, hasta };
+}
 export function pct(n, t) { return t ? (n * 100 / t) : 0; }
 export function fmt(p) { return (Math.round(p * 10) / 10).toLocaleString("es-CL", { maximumFractionDigits: 1 }) + "%"; }
 export function fmtDate(v) { if (!v) return ""; const [a, m, d] = v.split("-"); return `${d}-${m}-${a}`; }
@@ -132,8 +140,9 @@ export function exportCsv(rows, base) {
 // ---------- Filtros de fecha comunes ----------
 export function wireRangeButtons(desdeEl, hastaEl, onChange) {
   document.querySelectorAll("[data-range]").forEach(b => b.onclick = () => {
-    const r = b.dataset.range, h = today(); hastaEl.value = h;
-    desdeEl.value = r === "hoy" ? h : r === "7" ? addDays(h, -6) : temporadaInicio();
+    const r = b.dataset.range, h = today();
+    if (r === "temp") { const t = temporadaRango(); desdeEl.value = t.desde; hastaEl.value = t.hasta; }
+    else { hastaEl.value = h; desdeEl.value = r === "hoy" ? h : addDays(h, -6); }
     onChange();
   });
 }

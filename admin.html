@@ -40,6 +40,7 @@
       <button class="btn ghost small" type="button" data-range="temp">Temporada</button>
     </div>
   </section>
+  <div id="bulkRoot"></div>
   <div id="resRoot"><div class="state">Cargando…</div></div>
 </main>
 
@@ -66,8 +67,8 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { PRODUCTORES, VARIEDADES } from "./config.js";
-import { $, toast, today, temporadaInicio, esc, norm, initFirebase, esAdminEmail, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
+import { PRODUCTORES, VARIEDADES, HUERTOS } from "./config.js";
+import { $, toast, today, temporadaRango, esc, norm, initFirebase, esAdminEmail, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
 
 setupIcon("Frutea QC Administrador", "QC Admin");
 const FB = await initFirebase();
@@ -101,7 +102,7 @@ function tab(w) {
 $("tabRes").onclick = () => tab("res"); $("tabLinks").onclick = () => tab("links");
 
 // ---------- Resumen general ----------
-$("fDesde").value = temporadaInicio(); $("fHasta").value = today();
+{ const t = temporadaRango(); $("fDesde").value = t.desde; $("fHasta").value = t.hasta; }
 fillSelect($("fProductor"), "Todos los productores", PRODUCTORES);
 fillSelect($("fVariedad"), "Todas", VARIEDADES);
 wireRangeButtons($("fDesde"), $("fHasta"), loadRes);
@@ -122,6 +123,7 @@ async function loadRes() {
   const fp = $("fProductor").value, fv = $("fVariedad").value, fc = norm($("fCuartel").value);
   fillSelect($("fVariedad"), "Todas", [...new Set([...VARIEDADES, ...rows.map(r => r.variedad).filter(Boolean)])]);
   rows = sortRows(rows.filter(r => r.total > 0 && (!fp || r.productor === fp) && (!fv || norm(r.variedad) === norm(fv)) && (!fc || norm(r.cuartel).includes(fc))));
+  renderBulk(rows, fp);
   renderResumen($("resRoot"), rows, {
     groupBy: fp ? [["variedad", "Variedad"], ["cuartel", "Cuartel"]] : [["productor", "Productor"], ["variedad", "Variedad"]],
     csvName: "QC_defectos" + (fp ? "_" + fp.replace(/\W+/g, "-") : ""),
@@ -130,6 +132,33 @@ async function loadRes() {
       catch (e) { toast("No se pudo eliminar."); }
     }
   });
+}
+
+// ---------- Asignar huerto en bloque (corrige muestreos ya enviados) ----------
+function renderBulk(rows, fp) {
+  const root = $("bulkRoot"), lista = HUERTOS[fp];
+  if (!fp || !lista || !rows.length) { root.innerHTML = ""; return; }
+  const sin = rows.filter(r => !lista.includes(r.cuartel)).length;
+  root.innerHTML = `<section><h2>Asignar huerto</h2><div class="card">
+    <p class="muted" style="margin-top:0">Cambia el huerto de los <b>${rows.length}</b> muestreos de esta lista (${sin} sin un huerto válido). Usa los filtros para elegir cuáles.</p>
+    <div class="fields"><label class="f full">Huerto<select id="bulkSel"></select></label></div>
+    <div class="actions"><button class="btn primary grow" id="bulkBtn" type="button">Asignar a ${rows.length} muestreo${rows.length === 1 ? "" : "s"}</button></div>
+  </div></section>`;
+  fillSelect($("bulkSel"), "Selecciona huerto", lista);
+  let armed = null; const btn = $("bulkBtn");
+  btn.onclick = async () => {
+    const h = $("bulkSel").value; if (!h) { toast("Elige el huerto."); return; }
+    if (!armed) { btn.textContent = `¿Asignar "${h}" a ${rows.length}? toca otra vez`; armed = setTimeout(() => { armed = null; renderBulk(rows, fp); }, 3500); return; }
+    clearTimeout(armed); btn.disabled = true;
+    try {
+      for (let i = 0; i < rows.length; i += 400) {
+        const batch = fs.writeBatch(db);
+        rows.slice(i, i + 400).forEach(r => batch.update(fs.doc(db, COLECCION, r.id), { cuartel: h, actualizadoEn: fs.serverTimestamp(), actualizadoPor: user.email }));
+        await batch.commit();
+      }
+      toast(`Huerto "${h}" asignado a ${rows.length} muestreos`); loadRes();
+    } catch (e) { console.error(e); toast("No se pudo actualizar."); btn.disabled = false; }
+  };
 }
 
 // ---------- Enlaces de productores ----------

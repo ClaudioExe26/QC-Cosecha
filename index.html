@@ -27,7 +27,7 @@
     <h2>Datos de la muestra</h2>
     <div class="fields">
       <label class="f full">Productor<select id="productor"></select></label>
-      <label class="f">Huerto / cuartel<input type="text" id="cuartel" autocomplete="off"></label>
+      <label class="f">Huerto / cuartel<select id="cuartelSel" hidden></select><input type="text" id="cuartel" autocomplete="off"></label>
       <label class="f">Variedad<input type="text" id="variedad" autocomplete="off" list="variedades"></label>
       <label class="f">Fecha<input type="date" id="fecha"></label>
       <label class="f">Evaluador<input type="text" id="evaluador" autocomplete="off"></label>
@@ -86,7 +86,7 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { PRODUCTORES, VARIEDADES, DEFECTOS } from "./config.js";
+import { PRODUCTORES, VARIEDADES, DEFECTOS, HUERTOS } from "./config.js";
 import { $, toast, today, nowTime, pct, fmt, fmtDate, esc, loadImg, downloadBlob, initFirebase, setupIcon, fillSelect, COLECCION } from "./comun.js";
 
 setupIcon("Frutea Control de defectos", "Defectos");
@@ -145,8 +145,21 @@ $("productor").addEventListener("change", e => {
     $("cuartel").value = ""; $("variedad").value = ""; $("fecha").value = state.info.fecha;
     update(); toast("Productor cambiado: huerto, variedad y fecha reiniciados");
   }
-  state.info.productor = v; lastProductor = v; update();
+  state.info.productor = v; lastProductor = v; setupHuertos(); update();
 });
+// Huerto: lista cerrada si el productor tiene huertos definidos en config.js
+function setupHuertos() {
+  const lista = HUERTOS[state.info.productor], sel = $("cuartelSel"), inp = $("cuartel");
+  if (lista && lista.length) {
+    fillSelect(sel, "Selecciona huerto", lista);
+    if (!lista.includes(state.info.cuartel)) state.info.cuartel = "";
+    sel.value = state.info.cuartel; sel.hidden = false; inp.hidden = true;
+  } else {
+    sel.hidden = true; inp.hidden = false; inp.value = state.info.cuartel || "";
+  }
+}
+$("cuartelSel").addEventListener("change", e => { state.info.cuartel = e.target.value; update(); });
+setupHuertos();
 
 // ===================== CONTEO =====================
 const list = $("list");
@@ -218,6 +231,7 @@ async function saveSample() {
   const d = sampleData();
   if (!d.total) { toast("Ingresa al menos un fruto en el conteo."); return false; }
   if (!d.productor) { toast("Selecciona el productor."); $("productor").focus(); return false; }
+  if (!d.cuartel) { toast("Indica el huerto / cuartel de la muestra."); ($("cuartelSel").hidden ? $("cuartel") : $("cuartelSel")).focus(); return false; }
   if (!d.variedad) { toast("Completa la variedad."); $("variedad").focus(); return false; }
   if (!d.evaluador) { toast("Escribe tu nombre en Evaluador para enviar."); $("evaluador").focus(); return false; }
   if (!FB || !currentUser) { toast("Sin conexión con la base todavía. Abre la app con señal una vez para activarla.", 4500); return false; }

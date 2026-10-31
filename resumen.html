@@ -49,7 +49,7 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { $, toast, today, temporadaInicio, esc, initFirebase, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
+import { $, toast, today, temporadaRango, esc, initFirebase, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
 
 setupIcon("Frutea Resumen de calidad", "Calidad");
 function fail(t) { $("msg").hidden = false; $("app").hidden = true; $("msg").innerHTML = t; }
@@ -83,7 +83,7 @@ try {
   all = snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(r => r.total > 0);
 } catch (e) { console.error(e); toast("No se pudieron leer los muestreos."); }
 
-$("fDesde").value = temporadaInicio(); $("fHasta").value = today();
+{ const t = temporadaRango(); $("fDesde").value = t.desde; $("fHasta").value = t.hasta; }
 const variedades = [...new Set(all.map(r => r.variedad).filter(Boolean))].sort();
 const cuarteles = [...new Set(all.map(r => r.cuartel).filter(Boolean))].sort();
 fillSelect($("fVariedad"), "Todas", variedades);
