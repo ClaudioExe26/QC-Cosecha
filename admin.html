@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Frutea · QC Administrador</title>
+<meta name="theme-color" content="#B80F63">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <img class="brandlogo" src="logo-frutea.png" alt="Frutea Group">
+    <span class="brand-sub">QC Cosecha<br>Administrador</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tabRes" aria-selected="true" type="button">Resumen</button>
+    <button role="tab" id="tabLinks" aria-selected="false" type="button">Enlaces productores</button>
+  </nav>
+</header>
+
+<!-- ============ RESUMEN GENERAL ============ -->
+<main id="viewRes">
+  <section>
+    <h2>Filtros</h2>
+    <div class="fields">
+      <label class="f">Desde<input type="date" id="fDesde"></label>
+      <label class="f">Hasta<input type="date" id="fHasta"></label>
+      <label class="f full">Productor<select id="fProductor"></select></label>
+      <label class="f">Variedad<select id="fVariedad"></select></label>
+      <label class="f">Huerto / cuartel<input type="text" id="fCuartel" placeholder="Todos" autocomplete="off"></label>
+    </div>
+    <div class="actions">
+      <button class="btn ghost small" type="button" data-range="hoy">Hoy</button>
+      <button class="btn ghost small" type="button" data-range="7">7 días</button>
+      <button class="btn ghost small" type="button" data-range="temp">Temporada</button>
+    </div>
+  </section>
+  <div id="resRoot"><div class="state">Cargando…</div></div>
+</main>
+
+<!-- ============ ENLACES ============ -->
+<main id="viewLinks" hidden>
+  <section>
+    <h2>Enlaces de productores</h2>
+    <p class="muted" style="margin-top:0">Cada productor ve solo sus muestreos con su enlace. Si un enlace se comparte con quien no corresponde, revócalo y genera uno nuevo: el anterior deja de funcionar al instante.</p>
+    <div class="card" id="linksRoot"><div class="state">Cargando…</div></div>
+  </section>
+</main>
+<p class="muted center" id="userLine" style="padding-bottom:30px"></p>
+
+<div class="login" id="login" hidden>
+  <div class="box">
+    <div class="logo-wrap"><img src="logo-frutea.png" alt="Frutea Group"></div>
+    <b>Acceso administrador</b>
+    <label class="f">Correo<input type="email" id="lEmail" autocomplete="username"></label>
+    <label class="f">Contraseña<input type="password" id="lPass" autocomplete="current-password"></label>
+    <div class="err" id="lErr"></div>
+    <button class="btn primary" id="lBtn" type="button">Ingresar</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script type="module">
+import { PRODUCTORES, VARIEDADES } from "./config.js";
+import { $, toast, today, temporadaInicio, esc, norm, initFirebase, esAdminEmail, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
+
+setupIcon("Frutea QC Administrador", "QC Admin");
+const FB = await initFirebase();
+const { fa, fs, auth, db } = FB;
+let user = null;
+
+// ---------- Login ----------
+fa.onAuthStateChanged(auth, u => {
+  user = u && !u.isAnonymous ? u : null;
+  const ok = user && esAdminEmail(user.email);
+  $("login").hidden = !!ok;
+  if (user && !ok) $("lErr").textContent = "Esta cuenta no es administradora de QC.";
+  $("userLine").innerHTML = ok ? `${esc(user.email)} · <button class="del" id="btnLogout" type="button">Cerrar sesión</button>` : "";
+  if (ok) { $("btnLogout").onclick = () => fa.signOut(auth); loadRes(); loadLinks(); }
+});
+$("lBtn").onclick = async () => {
+  $("lErr").textContent = ""; $("lBtn").disabled = true;
+  try { await fa.signInWithEmailAndPassword(auth, $("lEmail").value.trim(), $("lPass").value); }
+  catch (e) { $("lErr").textContent = ["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found"].includes(e.code) ? "Correo o contraseña incorrectos." : "No se pudo ingresar (" + e.code + ")."; }
+  $("lBtn").disabled = false;
+};
+$("lPass").addEventListener("keydown", e => { if (e.key === "Enter") $("lBtn").click(); });
+
+// ---------- Pestañas ----------
+function tab(w) {
+  const r = w === "res";
+  $("viewRes").hidden = !r; $("viewLinks").hidden = r;
+  $("tabRes").setAttribute("aria-selected", r); $("tabLinks").setAttribute("aria-selected", !r);
+  window.scrollTo(0, 0);
+}
+$("tabRes").onclick = () => tab("res"); $("tabLinks").onclick = () => tab("links");
+
+// ---------- Resumen general ----------
+$("fDesde").value = temporadaInicio(); $("fHasta").value = today();
+fillSelect($("fProductor"), "Todos los productores", PRODUCTORES);
+fillSelect($("fVariedad"), "Todas", VARIEDADES);
+wireRangeButtons($("fDesde"), $("fHasta"), loadRes);
+["fDesde", "fHasta", "fProductor", "fVariedad"].forEach(id => $(id).addEventListener("change", loadRes));
+let ct; $("fCuartel").addEventListener("input", () => { clearTimeout(ct); ct = setTimeout(loadRes, 350); });
+
+let seq = 0;
+async function loadRes() {
+  if (!user) return;
+  const my = ++seq;
+  let desde = $("fDesde").value || today(), hasta = $("fHasta").value || today(); if (desde > hasta) [desde, hasta] = [hasta, desde];
+  let rows = [];
+  try {
+    const snap = await fs.getDocs(fs.query(fs.collection(db, COLECCION), fs.where("fecha", ">=", desde), fs.where("fecha", "<=", hasta)));
+    rows = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+  } catch (e) { console.error(e); toast(e.code === "permission-denied" ? "Sin permiso de lectura. Revisa las reglas." : "No se pudo leer la base."); }
+  if (my !== seq) return;
+  const fp = $("fProductor").value, fv = $("fVariedad").value, fc = norm($("fCuartel").value);
+  fillSelect($("fVariedad"), "Todas", [...new Set([...VARIEDADES, ...rows.map(r => r.variedad).filter(Boolean)])]);
+  rows = sortRows(rows.filter(r => r.total > 0 && (!fp || r.productor === fp) && (!fv || norm(r.variedad) === norm(fv)) && (!fc || norm(r.cuartel).includes(fc))));
+  renderResumen($("resRoot"), rows, {
+    groupBy: fp ? [["variedad", "Variedad"], ["cuartel", "Cuartel"]] : [["productor", "Productor"], ["variedad", "Variedad"]],
+    csvName: "QC_defectos" + (fp ? "_" + fp.replace(/\W+/g, "-") : ""),
+    onDelete: async id => {
+      try { await fs.deleteDoc(fs.doc(db, COLECCION, id)); toast("Muestreo eliminado"); loadRes(); }
+      catch (e) { toast("No se pudo eliminar."); }
+    }
+  });
+}
+
+// ---------- Enlaces de productores ----------
+function makeToken() {
+  const a = new Uint8Array(18); crypto.getRandomValues(a);
+  return Array.from(a, b => "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"[b % 56]).join("");
+}
+function linkFor(token) { return new URL("resumen.html", location.href).href.split("#")[0] + "#k=" + token; }
+let tokens = {};
+async function loadLinks() {
+  try {
+    const snap = await fs.getDocs(fs.collection(db, "accesoProductor"));
+    tokens = {};
+    snap.docs.forEach(d => { const p = d.data().productor; (tokens[p] = tokens[p] || []).push({ id: d.id, ...d.data() }); });
+  } catch (e) { console.error(e); $("linksRoot").innerHTML = `<p class="muted">No se pudieron leer los enlaces. Revisa las reglas de Firestore.</p>`; return; }
+  const names = [...new Set([...PRODUCTORES, ...Object.keys(tokens)])];
+  $("linksRoot").innerHTML = names.map(p => {
+    const t = (tokens[p] || [])[0];
+    const url = t ? linkFor(t.id) : "";
+    return `<div class="linkrow">
+      <span class="t">${esc(p)}</span><span class="chip ${t ? "ok" : "no"}">${t ? "Enlace activo" : "Sin enlace"}</span>
+      ${t ? `<span class="s">${esc(url)}</span>` : ""}
+      <div class="b">${t
+        ? `<button class="btn primary small" data-wa="${esc(p)}">Enviar por WhatsApp</button>
+           <button class="btn ghost small" data-copy="${esc(url)}">Copiar</button>
+           <button class="btn ghost small" data-new="${esc(p)}">Nuevo enlace</button>
+           <button class="btn ghost small" data-rev="${esc(p)}">Revocar</button>`
+        : `<button class="btn primary small" data-new="${esc(p)}">Generar enlace</button>`}</div>
+    </div>`;
+  }).join("");
+  const root = $("linksRoot");
+  root.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast("Enlace copiado"); } catch (e) { prompt("Copia el enlace:", b.dataset.copy); }
+  });
+  root.querySelectorAll("[data-wa]").forEach(b => b.onclick = () => {
+    const p = b.dataset.wa, t = tokens[p][0];
+    const msg = `Hola, este es tu enlace para ver el resumen de calidad de cosecha de ${p} (Frutea):\n${linkFor(t.id)}\n\nEs personal, por favor no lo reenvíes.`;
+    window.open("https://wa.me/?text=" + encodeURIComponent(msg), "_blank");
+  });
+  root.querySelectorAll("[data-new]").forEach(b => confirm2(b, async () => {
+    const p = b.dataset.new;
+    try {
+      const batch = fs.writeBatch(db);
+      (tokens[p] || []).forEach(t => batch.delete(fs.doc(db, "accesoProductor", t.id)));
+      batch.set(fs.doc(db, "accesoProductor", makeToken()), { productor: p, creadoEn: fs.serverTimestamp(), creadoPor: user.email });
+      await batch.commit(); toast(tokens[p] ? "Nuevo enlace generado. El anterior ya no funciona." : "Enlace generado"); loadLinks();
+    } catch (e) { console.error(e); toast("No se pudo generar el enlace."); }
+  }, !!tokens[b.dataset.new]));
+  root.querySelectorAll("[data-rev]").forEach(b => confirm2(b, async () => {
+    const p = b.dataset.rev;
+    try {
+      const batch = fs.writeBatch(db);
+      (tokens[p] || []).forEach(t => batch.delete(fs.doc(db, "accesoProductor", t.id)));
+      await batch.commit(); toast("Enlace revocado"); loadLinks();
+    } catch (e) { toast("No se pudo revocar."); }
+  }, true));
+}
+// Doble toque para acciones que invalidan un enlace
+function confirm2(btn, fn, needConfirm) {
+  let armed = null; const label = btn.textContent;
+  btn.onclick = () => {
+    if (needConfirm && !armed) { btn.textContent = "¿Seguro? toca otra vez"; armed = setTimeout(() => { armed = null; btn.textContent = label; }, 3000); return; }
+    clearTimeout(armed); armed = null; btn.disabled = true; fn().finally(() => { btn.disabled = false; });
+  };
+}
+</script>
+</body>
+</html>

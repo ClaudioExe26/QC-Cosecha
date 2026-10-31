@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Frutea · Resumen de calidad</title>
+<meta name="theme-color" content="#B80F63">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Calidad Frutea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+<header>
+  <div class="hbar">
+    <img class="brandlogo" src="logo-frutea.png" alt="Frutea Group">
+    <span class="brand-sub">Resumen de<br>calidad</span>
+  </div>
+</header>
+
+<main>
+  <div id="msg" class="state">Cargando…</div>
+  <div id="app" hidden>
+    <section class="hero">
+      <h1 id="prodName"></h1>
+      <p>Control de defectos en cosecha</p>
+    </section>
+    <section>
+      <h2>Filtros</h2>
+      <div class="fields">
+        <label class="f">Desde<input type="date" id="fDesde"></label>
+        <label class="f">Hasta<input type="date" id="fHasta"></label>
+        <label class="f">Variedad<select id="fVariedad"></select></label>
+        <label class="f">Huerto / cuartel<select id="fCuartel"></select></label>
+      </div>
+      <div class="actions">
+        <button class="btn ghost small" type="button" data-range="hoy">Hoy</button>
+        <button class="btn ghost small" type="button" data-range="7">7 días</button>
+        <button class="btn ghost small" type="button" data-range="temp">Temporada</button>
+      </div>
+    </section>
+    <div id="resRoot"></div>
+  </div>
+</main>
+<div class="toast" id="toast" role="status"></div>
+
+<script type="module">
+import { $, toast, today, temporadaInicio, esc, initFirebase, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
+
+setupIcon("Frutea Resumen de calidad", "Calidad");
+function fail(t) { $("msg").hidden = false; $("app").hidden = true; $("msg").innerHTML = t; }
+
+// El enlace trae la llave del productor: resumen.html#k=XXXX
+// Se recuerda en el teléfono para que funcione también desde el ícono de inicio.
+const KEY = "frutea-qc-llave";
+let token = (location.hash.match(/k=([A-Za-z0-9]+)/) || [])[1];
+try { if (token) localStorage.setItem(KEY, token); else token = localStorage.getItem(KEY); } catch (e) { }
+if (!token) { fail("Este enlace no es válido. Pide tu enlace personal a Frutea."); throw new Error("sin llave"); }
+
+const { fa, fs, auth, db } = await initFirebase().catch(e => { fail("No se pudo conectar. Revisa tu señal y vuelve a abrir el enlace."); throw e; });
+const u = auth.currentUser || await new Promise(res => { const off = fa.onAuthStateChanged(auth, x => { if (x) { off(); res(x); } }); fa.signInAnonymously(auth).catch(e => { fail("No se pudo conectar. Revisa tu señal y vuelve a abrir el enlace."); }); });
+
+let productor;
+try {
+  const acc = await fs.getDoc(fs.doc(db, "accesoProductor", token));
+  if (!acc.exists()) { try { localStorage.removeItem(KEY); } catch (e) { } fail("Este enlace fue desactivado. Pide un enlace nuevo a Frutea."); throw new Error("revocado"); }
+  productor = acc.data().productor;
+  // Vincula este teléfono a la llave: es lo que las reglas revisan para dejar leer
+  await fs.setDoc(fs.doc(db, "vinculos", u.uid), { token, productor, actualizadoEn: fs.serverTimestamp() });
+} catch (e) { if (e.message !== "revocado") { console.error(e); fail("No se pudo validar el enlace. Inténtalo de nuevo con señal."); } throw e; }
+
+$("prodName").textContent = productor;
+document.title = "Calidad · " + productor;
+$("msg").hidden = true; $("app").hidden = false;
+
+let all = [];
+try {
+  const snap = await fs.getDocs(fs.query(fs.collection(db, COLECCION), fs.where("productor", "==", productor)));
+  all = snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(r => r.total > 0);
+} catch (e) { console.error(e); toast("No se pudieron leer los muestreos."); }
+
+$("fDesde").value = temporadaInicio(); $("fHasta").value = today();
+const variedades = [...new Set(all.map(r => r.variedad).filter(Boolean))].sort();
+const cuarteles = [...new Set(all.map(r => r.cuartel).filter(Boolean))].sort();
+fillSelect($("fVariedad"), "Todas", variedades);
+fillSelect($("fCuartel"), "Todos", cuarteles);
+wireRangeButtons($("fDesde"), $("fHasta"), draw);
+["fDesde", "fHasta", "fVariedad", "fCuartel"].forEach(id => $(id).addEventListener("change", draw));
+
+function draw() {
+  let desde = $("fDesde").value || "0000", hasta = $("fHasta").value || "9999"; if (desde > hasta) [desde, hasta] = [hasta, desde];
+  const fv = $("fVariedad").value, fc = $("fCuartel").value;
+  const rows = sortRows(all.filter(r => r.fecha >= desde && r.fecha <= hasta && (!fv || r.variedad === fv) && (!fc || r.cuartel === fc)));
+  renderResumen($("resRoot"), rows, { groupBy: [["variedad", "Variedad"], ["cuartel", "Cuartel"]], hideProductor: true, csvName: "Calidad_" + productor.replace(/\W+/g, "-") });
+}
+draw();
+</script>
+</body>
+</html>
