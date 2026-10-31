@@ -104,11 +104,12 @@ export function renderResumen(root, rows, opts = {}) {
       <div class="card">${rows.map(r => `<div class="sample">
         <span class="t">${opts.hideProductor ? "" : esc(r.productor) + " · "}${esc(r.variedad)}${r.cuartel ? " · " + esc(r.cuartel) : ""}</span><span class="e">${fmt(r.pctExportable ?? pct(r.exportable, r.total))}</span>
         <span class="s">${fmtDate(r.fecha)} ${esc(r.hora || "")} · ${r.total} frutos${r.evaluador ? " · " + esc(r.evaluador) : ""}${r.defectos ? " · " + topDef(r) : ""}</span>
-        ${opts.onDelete ? `<button class="del" type="button" data-del="${esc(r.id)}">Eliminar</button>` : "<span></span>"}
+        <span style="display:flex;gap:14px">${opts.onEdit ? `<button class="del" type="button" data-edit="${esc(r.id)}">Editar</button>` : ""}${opts.onDelete ? `<button class="del" type="button" data-del="${esc(r.id)}">Eliminar</button>` : ""}</span>
       </div>`).join("")}</div>
       <div class="actions"><button class="btn ghost grow" type="button" data-csv>Exportar a Excel (CSV)</button></div>
     </section>`;
   root.querySelector("[data-csv]").onclick = () => exportCsv(rows, opts.csvName || "QC_defectos");
+  if (opts.onEdit) root.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => opts.onEdit(b.dataset.edit));
   if (opts.onDelete) root.querySelectorAll("[data-del]").forEach(b => {
     let armed = null;
     b.onclick = () => {
