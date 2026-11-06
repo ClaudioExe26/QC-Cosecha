@@ -26,7 +26,8 @@ export const PRODUCTORES = [
   "Guillermo Urzúa",
   "Francisco Silva",
   "Gabriela Videla",
-  "Luis Meza"
+  "Luis Meza",
+  "Agrícola Olpa SPA"
 ];
 
 export const VARIEDADES = [
@@ -37,7 +38,14 @@ export const VARIEDADES = [
 // Huertos / cuarteles por productor. Si un productor está aquí, el evaluador
 // debe elegir uno de la lista (no puede escribir otro). Si no está, lo escribe a mano.
 export const HUERTOS = {
-  "Diego Pacheco Álvarez": ["Placilla", "Polonia", "Taitao", "Taitao Lapins", "Las Parcelas"]
+  "Diego Pacheco Álvarez": ["Placilla", "Polonia", "Taitao", "Taitao Lapins", "Las Parcelas"],
+  "Agrícola Olpa SPA": ["Peumo"]
+};
+
+// Variedades por productor. Si un productor está aquí, el evaluador solo puede
+// elegir esas variedades. Si no está, se usa la lista general VARIEDADES.
+export const VARIEDADES_PRODUCTOR = {
+  "Agrícola Olpa SPA": ["Sweet Aryana", "Nimba", "Pacific Red"]
 };
 
 // Período de cosecha que usa el botón "Temporada" y el filtro inicial de los resúmenes (mes-día).
