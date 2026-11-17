@@ -138,3 +138,13 @@ dialog::backdrop{background:rgba(20,5,12,.6)}
 .hero h1{margin:0;font-size:1.5rem;font-weight:800;letter-spacing:-.02em;color:var(--cherry)}
 .hero p{margin:2px 0 0;color:var(--muted)}
 .state{padding:40px 10px;text-align:center;color:var(--muted)}
+textarea{font:inherit;font-size:1rem;color:var(--ink);background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;width:100%;resize:vertical}
+textarea:focus-visible{outline:3px solid var(--magenta-2);outline-offset:2px}
+.full{grid-column:1/-1}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chipcheck{position:relative;cursor:pointer}
+.chipcheck input{position:absolute;opacity:0;pointer-events:none}
+.chipcheck span{display:inline-block;padding:7px 12px;border-radius:999px;background:var(--soft);color:var(--muted);font-weight:600;font-size:.88rem;border:1.5px solid transparent}
+.chipcheck input:checked+span{background:var(--magenta);color:#fff}
+.chipcheck input:focus-visible+span{border-color:var(--magenta-2)}
+.tabs button{font-size:.92rem;padding:9px 6px}

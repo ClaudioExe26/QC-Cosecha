@@ -19,7 +19,8 @@
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" id="tabRes" aria-selected="true" type="button">Resumen</button>
-    <button role="tab" id="tabLinks" aria-selected="false" type="button">Enlaces productores</button>
+    <button role="tab" id="tabProds" aria-selected="false" type="button">Productores</button>
+    <button role="tab" id="tabLinks" aria-selected="false" type="button">Enlaces</button>
   </nav>
 </header>
 
@@ -50,6 +51,19 @@
     <h2>Enlaces de productores</h2>
     <p class="muted" style="margin-top:0">Cada productor ve solo sus muestreos con su enlace. Si un enlace se comparte con quien no corresponde, revócalo y genera uno nuevo: el anterior deja de funcionar al instante.</p>
     <div class="card" id="linksRoot"><div class="state">Cargando…</div></div>
+  </section>
+</main>
+<!-- ============ PRODUCTORES ============ -->
+<main id="viewProds" hidden>
+  <section>
+    <h2>Productores</h2>
+    <p class="muted" style="margin-top:0">Los cambios aparecen en la app de evaluadores la próxima vez que la abran con señal. No hace falta tocar archivos.</p>
+    <div class="actions" style="margin:0 0 12px"><button class="btn primary grow" id="btnNewProd" type="button">+ Añadir nuevo productor</button></div>
+    <div class="card" id="prodsRoot"><div class="state">Cargando…</div></div>
+  </section>
+  <section id="ocultosSec" hidden>
+    <h2>Productores ocultos</h2>
+    <div class="card" id="ocultosRoot"></div>
   </section>
 </main>
 <p class="muted center" id="userLine" style="padding-bottom:30px"></p>
@@ -84,16 +98,45 @@
     <button class="btn ghost" id="edCancel" type="button">Cancelar</button>
   </div>
 </dialog>
+<dialog id="prodDlg">
+  <div class="dlg-head" id="prodHead" style="color:var(--cherry)">Nuevo productor</div>
+  <div class="dlg-body">
+    <div class="fields">
+      <label class="f full">Nombre o razón social<input type="text" id="pNombre" autocomplete="off" placeholder="Ej: Agrícola Los Robles SPA"></label>
+      <p class="muted full" id="pNombreNota" style="margin:0" hidden>El nombre no se puede cambiar porque los muestreos y el enlace del productor dependen de él.</p>
+      <label class="f full">Huertos / zonas (uno por línea)<textarea id="pHuertos" rows="4" placeholder="San Vicente&#10;Pichidegua"></textarea></label>
+    </div>
+    <p class="muted" style="margin:6px 0 10px;font-size:.82rem">Si dejas los huertos vacíos, el evaluador los escribe a mano.</p>
+    <h2 style="margin:8px 0 6px">Variedades</h2>
+    <div class="chips" id="pVars"></div>
+    <div class="fields" style="margin-top:10px;grid-template-columns:1fr auto">
+      <input type="text" id="pVarOtra" placeholder="Otra variedad" autocomplete="off">
+      <button class="btn ghost small" id="pVarAdd" type="button">Agregar</button>
+    </div>
+    <p class="muted" style="margin:6px 0 0;font-size:.82rem">Si no marcas ninguna, el evaluador puede elegir cualquier variedad.</p>
+  </div>
+  <div class="dlg-actions">
+    <button class="btn primary grow" id="pSave" type="button">Guardar productor</button>
+    <button class="btn ghost" id="pCancel" type="button">Cancelar</button>
+  </div>
+</dialog>
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { PRODUCTORES, VARIEDADES, HUERTOS } from "./config.js";
-import { $, toast, today, temporadaRango, esc, norm, initFirebase, esAdminEmail, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION } from "./comun.js";
+import { $, toast, today, temporadaRango, esc, norm, initFirebase, esAdminEmail, renderResumen, sortRows, wireRangeButtons, fillSelect, setupIcon, COLECCION, catalogoLocal, loadCatalogo, CAT_COL, idProductor } from "./comun.js";
 
 setupIcon("Frutea QC Administrador", "QC Admin");
 const FB = await initFirebase();
 const { fa, fs, auth, db } = FB;
 let user = null;
+let CAT = catalogoLocal();
+async function refreshCat() {
+  try { CAT = await loadCatalogo(fs, db); } catch (e) { console.error(e); toast("No se pudo leer la lista de productores."); }
+  fillSelect($("fProductor"), "Todos los productores", CAT.productores);
+  fillSelect($("edProd"), "", CAT.productores);
+  $("edVars").innerHTML = CAT.todasVar.map(v => `<option value="${esc(v)}">`).join("");
+  renderProds();
+}
 
 // ---------- Login ----------
 fa.onAuthStateChanged(auth, u => {
@@ -102,7 +145,7 @@ fa.onAuthStateChanged(auth, u => {
   $("login").hidden = !!ok;
   if (user && !ok) $("lErr").textContent = "Esta cuenta no es administradora de QC.";
   $("userLine").innerHTML = ok ? `${esc(user.email)} · <button class="del" id="btnLogout" type="button">Cerrar sesión</button>` : "";
-  if (ok) { $("btnLogout").onclick = () => fa.signOut(auth); loadRes(); loadLinks(); }
+  if (ok) { $("btnLogout").onclick = () => fa.signOut(auth); refreshCat().then(() => { loadRes(); loadLinks(); }); }
 });
 $("lBtn").onclick = async () => {
   $("lErr").textContent = ""; $("lBtn").disabled = true;
@@ -114,17 +157,18 @@ $("lPass").addEventListener("keydown", e => { if (e.key === "Enter") $("lBtn").c
 
 // ---------- Pestañas ----------
 function tab(w) {
-  const r = w === "res";
-  $("viewRes").hidden = !r; $("viewLinks").hidden = r;
-  $("tabRes").setAttribute("aria-selected", r); $("tabLinks").setAttribute("aria-selected", !r);
+  [["res", "viewRes", "tabRes"], ["prods", "viewProds", "tabProds"], ["links", "viewLinks", "tabLinks"]].forEach(([k, v, t]) => {
+    $(v).hidden = k !== w; $(t).setAttribute("aria-selected", k === w);
+  });
+  if (w === "links") loadLinks();
   window.scrollTo(0, 0);
 }
-$("tabRes").onclick = () => tab("res"); $("tabLinks").onclick = () => tab("links");
+$("tabRes").onclick = () => tab("res"); $("tabProds").onclick = () => tab("prods"); $("tabLinks").onclick = () => tab("links");
 
 // ---------- Resumen general ----------
 { const t = temporadaRango(); $("fDesde").value = t.desde; $("fHasta").value = t.hasta; }
-fillSelect($("fProductor"), "Todos los productores", PRODUCTORES);
-fillSelect($("fVariedad"), "Todas", VARIEDADES);
+fillSelect($("fProductor"), "Todos los productores", CAT.productores);
+fillSelect($("fVariedad"), "Todas", CAT.todasVar);
 wireRangeButtons($("fDesde"), $("fHasta"), loadRes);
 ["fDesde", "fHasta", "fProductor", "fVariedad"].forEach(id => $(id).addEventListener("change", loadRes));
 let ct; $("fCuartel").addEventListener("input", () => { clearTimeout(ct); ct = setTimeout(loadRes, 350); });
@@ -141,7 +185,7 @@ async function loadRes() {
   } catch (e) { console.error(e); toast(e.code === "permission-denied" ? "Sin permiso de lectura. Revisa las reglas." : "No se pudo leer la base."); }
   if (my !== seq) return;
   const fp = $("fProductor").value, fv = $("fVariedad").value, fc = norm($("fCuartel").value);
-  fillSelect($("fVariedad"), "Todas", [...new Set([...VARIEDADES, ...rows.map(r => r.variedad).filter(Boolean)])]);
+  fillSelect($("fVariedad"), "Todas", [...new Set([...CAT.todasVar, ...rows.map(r => r.variedad).filter(Boolean)])]);
   rows = sortRows(rows.filter(r => r.total > 0 && (!fp || r.productor === fp) && (!fv || norm(r.variedad) === norm(fv)) && (!fc || norm(r.cuartel).includes(fc))));
   renderBulk(rows, fp);
   shown = rows;
@@ -158,7 +202,7 @@ async function loadRes() {
 
 // ---------- Asignar huerto en bloque (corrige muestreos ya enviados) ----------
 function renderBulk(rows, fp) {
-  const root = $("bulkRoot"), lista = HUERTOS[fp];
+  const root = $("bulkRoot"), lista = CAT.huertos[fp];
   if (!fp || !lista || !rows.length) { root.innerHTML = ""; return; }
   const sinRows = rows.filter(r => !lista.includes(r.cuartel));
   if (!sinRows.length) { root.innerHTML = ""; return; }
@@ -186,10 +230,10 @@ function renderBulk(rows, fp) {
 
 // ---------- Editar un muestreo ----------
 let editing = null;
-fillSelect($("edProd"), "", PRODUCTORES);
-$("edVars").innerHTML = VARIEDADES.map(v => `<option value="${esc(v)}">`).join("");
+fillSelect($("edProd"), "", CAT.productores);
+$("edVars").innerHTML = CAT.todasVar.map(v => `<option value="${esc(v)}">`).join("");
 function edHuertos(valor) {
-  const lista = HUERTOS[$("edProd").value], sel = $("edHuertoSel"), inp = $("edHuerto");
+  const lista = CAT.huertos[$("edProd").value], sel = $("edHuertoSel"), inp = $("edHuerto");
   if (lista && lista.length) { fillSelect(sel, "Sin huerto", lista); sel.value = lista.includes(valor) ? valor : ""; sel.hidden = false; inp.hidden = true; }
   else { sel.hidden = true; inp.hidden = false; inp.value = valor || ""; }
 }
@@ -203,7 +247,7 @@ function edShowTot() { const t = edTotals(); $("edTot").textContent = `Total ${t
 function openEdit(id) {
   const r = shown.find(x => x.id === id); if (!r) return;
   editing = r;
-  if (![...$("edProd").options].some(o => o.value === r.productor)) fillSelect($("edProd"), "", [...PRODUCTORES, r.productor]);
+  if (![...$("edProd").options].some(o => o.value === r.productor)) fillSelect($("edProd"), "", [...CAT.productores, r.productor]);
   $("edProd").value = r.productor; edHuertos(r.cuartel);
   $("edVar").value = r.variedad || ""; $("edFecha").value = r.fecha || ""; $("edEval").value = r.evaluador || "";
   const defs = { ...(r.defectos || {}) };
@@ -233,6 +277,66 @@ $("edSave").onclick = async () => {
   $("edSave").disabled = false;
 };
 
+// ---------- Productores ----------
+function renderProds() {
+  const root = $("prodsRoot");
+  root.innerHTML = CAT.productores.map(n => {
+    const h = CAT.huertos[n] || [], v = CAT.variedades[n] || [];
+    return `<div class="linkrow">
+      <span class="t">${esc(n)}</span><span class="chip ${CAT.origen[n] === "config" ? "no" : "ok"}">${CAT.origen[n] === "config" ? "Base" : "Editado en admin"}</span>
+      <span class="s">Huertos: ${h.length ? esc(h.join(", ")) : "<i>libre</i>"}<br>Variedades: ${v.length ? esc(v.join(", ")) : "<i>todas</i>"}</span>
+      <div class="b"><button class="btn ghost small" data-pedit="${esc(n)}">Editar</button><button class="btn ghost small" data-phide="${esc(n)}">Ocultar</button></div>
+    </div>`;
+  }).join("") || `<p class="muted">Sin productores.</p>`;
+  root.querySelectorAll("[data-pedit]").forEach(b => b.onclick = () => openProd(b.dataset.pedit));
+  root.querySelectorAll("[data-phide]").forEach(b => confirm2(b, () => setActivo(b.dataset.phide, false), true));
+  $("ocultosSec").hidden = !CAT.ocultos.length;
+  $("ocultosRoot").innerHTML = CAT.ocultos.map(n => `<div class="linkrow"><span class="t">${esc(n)}</span><span></span>
+    <div class="b"><button class="btn ghost small" data-pshow="${esc(n)}">Volver a mostrar</button></div></div>`).join("");
+  $("ocultosRoot").querySelectorAll("[data-pshow]").forEach(b => confirm2(b, () => setActivo(b.dataset.pshow, true), false));
+}
+async function setActivo(nombre, activo) {
+  try {
+    await fs.setDoc(fs.doc(db, CAT_COL, idProductor(nombre)), { nombre, activo, actualizadoEn: fs.serverTimestamp(), actualizadoPor: user.email }, { merge: true });
+    toast(activo ? "Productor visible otra vez" : "Productor oculto. Sus muestreos se conservan."); await refreshCat();
+  } catch (e) { console.error(e); toast("No se pudo guardar. Revisa las reglas de Firestore."); }
+}
+let prodEditing = null, pVarSel = new Set();
+function drawVarChips(extra = []) {
+  const all = [...new Set([...CAT.todasVar, ...extra, ...pVarSel])];
+  $("pVars").innerHTML = all.map(v => `<label class="chipcheck"><input type="checkbox" value="${esc(v)}" ${pVarSel.has(v) ? "checked" : ""}><span>${esc(v)}</span></label>`).join("");
+  $("pVars").querySelectorAll("input").forEach(i => i.onchange = () => { i.checked ? pVarSel.add(i.value) : pVarSel.delete(i.value); });
+}
+function openProd(nombre) {
+  prodEditing = nombre || null;
+  $("prodHead").textContent = nombre ? "Editar productor" : "Nuevo productor";
+  $("pNombre").value = nombre || ""; $("pNombre").readOnly = !!nombre; $("pNombreNota").hidden = !nombre;
+  $("pHuertos").value = nombre ? (CAT.huertos[nombre] || []).join("\n") : "";
+  pVarSel = new Set(nombre ? (CAT.variedades[nombre] || []) : []);
+  $("pVarOtra").value = ""; drawVarChips();
+  $("prodDlg").showModal(); if (!nombre) $("pNombre").focus();
+}
+$("btnNewProd").onclick = () => openProd(null);
+$("pCancel").onclick = () => $("prodDlg").close();
+$("pVarAdd").onclick = () => { const v = $("pVarOtra").value.trim(); if (!v) return; pVarSel.add(v); $("pVarOtra").value = ""; drawVarChips([v]); };
+$("pVarOtra").addEventListener("keydown", e => { if (e.key === "Enter") $("pVarAdd").click(); });
+$("pSave").onclick = async () => {
+  const nombre = $("pNombre").value.replace(/\s+/g, " ").trim();
+  if (!nombre) { toast("Escribe el nombre del productor."); return; }
+  if (!prodEditing) {
+    const choque = [...CAT.productores, ...CAT.ocultos].find(n => norm(n) === norm(nombre));
+    if (choque) { toast(`Ya existe "${choque}". Edítalo o vuelve a mostrarlo.`, 4000); return; }
+  }
+  const huertos = [...new Set($("pHuertos").value.split(/\n/).map(h => h.replace(/\s+/g, " ").trim()).filter(Boolean))];
+  const variedades = [...pVarSel];
+  $("pSave").disabled = true;
+  try {
+    await fs.setDoc(fs.doc(db, CAT_COL, idProductor(nombre)), { nombre, huertos, variedades, activo: true, actualizadoEn: fs.serverTimestamp(), actualizadoPor: user.email }, { merge: true });
+    $("prodDlg").close(); toast(prodEditing ? "Productor actualizado" : `"${nombre}" agregado`); await refreshCat();
+  } catch (e) { console.error(e); toast("No se pudo guardar. Revisa las reglas de Firestore."); }
+  $("pSave").disabled = false;
+};
+
 // ---------- Enlaces de productores ----------
 function makeToken() {
   const a = new Uint8Array(18); crypto.getRandomValues(a);
@@ -246,7 +350,7 @@ async function loadLinks() {
     tokens = {};
     snap.docs.forEach(d => { const p = d.data().productor; (tokens[p] = tokens[p] || []).push({ id: d.id, ...d.data() }); });
   } catch (e) { console.error(e); $("linksRoot").innerHTML = `<p class="muted">No se pudieron leer los enlaces. Revisa las reglas de Firestore.</p>`; return; }
-  const names = [...new Set([...PRODUCTORES, ...Object.keys(tokens)])];
+  const names = [...new Set([...CAT.productores, ...Object.keys(tokens)])];
   $("linksRoot").innerHTML = names.map(p => {
     const t = (tokens[p] || [])[0];
     const url = t ? linkFor(t.id) : "";

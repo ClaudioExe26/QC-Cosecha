@@ -86,12 +86,14 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { PRODUCTORES, VARIEDADES, DEFECTOS, HUERTOS, VARIEDADES_PRODUCTOR } from "./config.js";
-import { $, toast, today, nowTime, pct, fmt, fmtDate, esc, loadImg, downloadBlob, initFirebase, setupIcon, fillSelect, COLECCION } from "./comun.js";
+import { DEFECTOS } from "./config.js";
+import { $, toast, today, nowTime, pct, fmt, fmtDate, esc, loadImg, downloadBlob, initFirebase, setupIcon, fillSelect, COLECCION, catalogoLocal, loadCatalogo } from "./comun.js";
 
 setupIcon("Frutea Control de defectos", "Defectos");
-fillSelect($("productor"), "Selecciona productor", PRODUCTORES);
-$("variedades").innerHTML = VARIEDADES.map(v => `<option value="${esc(v)}">`).join("");
+// Productores: config.js + los agregados desde admin (se actualiza al conectar con la base)
+let CAT = catalogoLocal();
+fillSelect($("productor"), "Selecciona productor", CAT.productores);
+$("variedades").innerHTML = CAT.todasVar.map(v => `<option value="${esc(v)}">`).join("");
 function newId() { return today().replace(/-/g, "") + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7); }
 
 // ===================== BASE DE DATOS (solo escritura) =====================
@@ -100,7 +102,7 @@ initFirebase().then(fb => {
   FB = fb;
   const anon = () => fb.fa.signInAnonymously(fb.auth).catch(e => console.warn("Sin sesión todavía", e.code));
   window.addEventListener("online", () => { if (!currentUser) anon(); });
-  fb.fa.onAuthStateChanged(fb.auth, u => { currentUser = u; if (!u) anon(); $("netBanner").hidden = true; });
+  fb.fa.onAuthStateChanged(fb.auth, u => { currentUser = u; if (!u) anon(); else refreshCatalogo(); $("netBanner").hidden = true; });
 }).catch(e => {
   console.error(e);
   const b = $("netBanner"); b.hidden = false; b.textContent = "No se pudo conectar con la base de datos. Revisa la señal y vuelve a abrir la app.";
@@ -128,7 +130,7 @@ state.defects.forEach(d => { if (!d.custom && d.name === "Fruta light") d.name =
   extra.forEach(d => { if (!d.custom && !DEFECTOS.includes(d.name)) d.custom = true; });
   state.defects = fixed.concat(extra.filter(d => !(d.custom && DEFECTOS.includes(d.name.trim()))));
 }
-if (!PRODUCTORES.includes(state.info.productor)) state.info.productor = "";
+if (!CAT.productores.includes(state.info.productor)) state.info.productor = "";
 if (!state.info.fecha) state.info.fecha = today();
 if (!state.sampleId) { state.sampleId = newId(); state.savedHash = null; state.everSaved = false; }
 function saveLocal() { try { const { photo, ...rest } = state; localStorage.setItem(KEY, JSON.stringify(rest)); } catch (e) { } }
@@ -147,9 +149,9 @@ $("productor").addEventListener("change", e => {
   }
   state.info.productor = v; lastProductor = v; setupHuertos(); setupVariedades(); update();
 });
-// Huerto: lista cerrada si el productor tiene huertos definidos en config.js
+// Huerto: lista cerrada si el productor tiene huertos definidos
 function setupHuertos() {
-  const lista = HUERTOS[state.info.productor], sel = $("cuartelSel"), inp = $("cuartel");
+  const lista = CAT.huertos[state.info.productor], sel = $("cuartelSel"), inp = $("cuartel");
   if (lista && lista.length) {
     fillSelect(sel, "Selecciona huerto", lista);
     if (!lista.includes(state.info.cuartel)) state.info.cuartel = "";
@@ -159,9 +161,9 @@ function setupHuertos() {
   }
 }
 $("cuartelSel").addEventListener("change", e => { state.info.cuartel = e.target.value; update(); });
-// Variedad: lista cerrada si el productor tiene variedades definidas en config.js
+// Variedad: lista cerrada si el productor tiene variedades definidas
 function setupVariedades() {
-  const lista = VARIEDADES_PRODUCTOR[state.info.productor], sel = $("variedadSel"), inp = $("variedad");
+  const lista = CAT.variedades[state.info.productor], sel = $("variedadSel"), inp = $("variedad");
   if (lista && lista.length) {
     fillSelect(sel, "Selecciona variedad", lista);
     if (!lista.includes(state.info.variedad)) state.info.variedad = "";
@@ -172,6 +174,15 @@ function setupVariedades() {
 }
 $("variedadSel").addEventListener("change", e => { state.info.variedad = e.target.value; update(); });
 setupHuertos(); setupVariedades();
+async function refreshCatalogo() {
+  try { CAT = await loadCatalogo(FB.fs, FB.db); } catch (e) { console.warn("Catálogo sin conexión, uso el guardado", e.code); return; }
+  const sel = $("productor");
+  fillSelect(sel, "Selecciona productor", CAT.productores);
+  if (!CAT.productores.includes(state.info.productor)) state.info.productor = "";
+  sel.value = state.info.productor; lastProductor = state.info.productor;
+  $("variedades").innerHTML = CAT.todasVar.map(v => `<option value="${esc(v)}">`).join("");
+  setupHuertos(); setupVariedades(); update();
+}
 
 // ===================== CONTEO =====================
 const list = $("list");

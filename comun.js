@@ -169,3 +169,36 @@ export function setupIcon(name, shortName) {
     } catch (e) { }
   }).catch(() => { });
 }
+
+// ---------- Catálogo de productores (config.js + los agregados desde admin) ----------
+// Los productores de config.js son la base. Los que se agregan o editan en admin
+// se guardan en Firestore (colección qc_productores) y se suman o reemplazan a la base.
+import { PRODUCTORES as P0, HUERTOS as H0, VARIEDADES_PRODUCTOR as V0, VARIEDADES as VG } from "./config.js";
+export const CAT_COL = "qc_productores";
+const CAT_KEY = "frutea-qc-catalogo-v1";
+export function idProductor(nombre) { return norm(nombre).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 120) || "productor"; }
+export function mergeCatalogo(docs) {
+  const huertos = { ...H0 }, variedades = { ...V0 }, ocultos = new Set(), origen = {};
+  let nombres = [...P0]; nombres.forEach(n => origen[n] = "config");
+  (docs || []).forEach(d => {
+    if (!d || !d.nombre) return;
+    if (d.activo === false) { ocultos.add(d.nombre); origen[d.nombre] = origen[d.nombre] || "admin"; return; }
+    if (!nombres.includes(d.nombre)) nombres.push(d.nombre);
+    origen[d.nombre] = origen[d.nombre] === "config" ? "config+admin" : "admin";
+    if (Array.isArray(d.huertos)) { if (d.huertos.length) huertos[d.nombre] = d.huertos; else delete huertos[d.nombre]; }
+    if (Array.isArray(d.variedades)) { if (d.variedades.length) variedades[d.nombre] = d.variedades; else delete variedades[d.nombre]; }
+  });
+  const activos = nombres.filter(n => !ocultos.has(n)).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+  const todasVar = [...new Set([...VG, ...Object.values(variedades).flat()])];
+  return { productores: activos, ocultos: [...ocultos].sort((a, b) => a.localeCompare(b, "es")), huertos, variedades, todasVar, origen, docs: docs || [] };
+}
+export function catalogoLocal() {
+  try { const c = JSON.parse(localStorage.getItem(CAT_KEY) || "null"); if (Array.isArray(c)) return mergeCatalogo(c); } catch (e) { }
+  return mergeCatalogo([]);
+}
+export async function loadCatalogo(fs, db) {
+  const snap = await fs.getDocs(fs.collection(db, CAT_COL));
+  const docs = snap.docs.map(d => ({ ...d.data(), _id: d.id }));
+  try { localStorage.setItem(CAT_KEY, JSON.stringify(docs.map(({ actualizadoEn, ...r }) => r))); } catch (e) { }
+  return mergeCatalogo(docs);
+}
