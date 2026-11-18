@@ -335,7 +335,10 @@ async function buildReport() {
   const brand = await loadImg(document.querySelector(".brandlogo").src);
   const photo = state.photo ? await loadImg(state.photo) : null;
   const photoH = photo ? Math.min(860, Math.round((W - 2 * P) * photo.naturalHeight / photo.naturalWidth)) : 0;
-  const rows = [...state.defects.filter(d => !(d.custom && !d.name.trim() && !(+d.n))).map(d => ({ name: d.name.trim() || "Otro defecto", n: +d.n || 0, exp: false })), { name: "Exportable (sanos)", n: t.exp, exp: true }];
+  // En la ficha solo van los defectos encontrados (cantidad > 0), de mayor a menor
+  const defRows = state.defects.filter(d => (+d.n || 0) > 0).map(d => ({ name: d.name.trim() || "Otro defecto", n: +d.n, exp: false })).sort((a, b) => b.n - a.n);
+  if (!defRows.length) defRows.push({ name: "Sin defectos", n: 0, exp: false, none: true });
+  const rows = [...defRows, { name: "Exportable (sanos)", n: t.exp, exp: true }];
   const rowH = 64;
   const infoItems = [["Productor", state.info.productor], ["Huerto / cuartel", state.info.cuartel], ["Variedad", state.info.variedad], ["Fecha", fmtDate(state.info.fecha)], ["Evaluador", state.info.evaluador]].filter(a => a[1]);
   const infoH = Math.ceil(infoItems.length / 2) * 78;
@@ -378,7 +381,7 @@ async function buildReport() {
     x.strokeStyle = "#EADDE3"; x.lineWidth = 2; x.beginPath(); x.moveTo(P, y); x.lineTo(W - P, y); x.stroke();
     x.fillStyle = r.exp ? "#2F7A3E" : "#24131B"; x.font = `${r.exp ? 600 : 400} 30px ${F}`;
     x.fillText(clip(x, r.name, 480), cx[0], y + rowH / 2); x.textAlign = "right";
-    x.font = `600 30px ${F}`; x.fillText(String(r.n), cx[1] + 80, y + rowH / 2); x.fillText(fmt(pct(r.n, t.total)), cx[2], y + rowH / 2); x.textAlign = "left";
+    x.font = `600 30px ${F}`; x.fillText(r.none ? "—" : String(r.n), cx[1] + 80, y + rowH / 2); x.fillText(r.none ? "—" : fmt(pct(r.n, t.total)), cx[2], y + rowH / 2); x.textAlign = "left";
     y += rowH;
   });
   x.strokeStyle = "#24131B"; x.lineWidth = 3; x.beginPath(); x.moveTo(P, y); x.lineTo(W - P, y); x.stroke();
