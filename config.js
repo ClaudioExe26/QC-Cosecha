@@ -99,7 +99,25 @@ export const VARIEDADES_PRODUCTOR = {
 // Si el fin es anterior al inicio (ej. inicio "10-31", fin "01-15"), se toma como enero del año siguiente.
 export const TEMPORADA = { inicio: "10-31", fin: "12-31" };
 
-export const DEFECTOS = [
-  "Pitting", "Machucón", "Sin pedicelo", "Picada de pájaro",
-  "Falta de color", "Precalibre", "Partidura", "Frutos dobles"
+// Defectos según cartilla "Daños en cerezas" (PDT Cerezos) + los propios de Frutea.
+// CONDICIÓN: daños que avanzan en frío y tránsito. CALIDAD: daños estables.
+export const DEFECTOS_CONDICION = [
+  "Pitting", "Machucón", "Daño por uña", "Herida abierta",
+  "Partidura longitudinal", "Partidura media luna", "Partidura apical",
+  "Sin pedicelo", "Pedicelo deshidratado y/o pardo", "Fruto deshidratado",
+  "Fruto blando", "Sobremadurez", "Piel de lagarto", "Pudrición",
+  "Daño de polilla", "Daño drosophila", "Picada de pájaro"
 ];
+export const DEFECTOS_CALIDAD = [
+  "Falta de color", "Precalibre", "Fruto doble", "Fruto deforme", "Sutura",
+  "Herida cicatrizada", "Russet", "Manchas", "Golpe de sol"
+];
+export const DEFECTOS = [...DEFECTOS_CONDICION, ...DEFECTOS_CALIDAD];
+
+// Nombres antiguos que pasan a un nombre nuevo
+export const RENOMBRES = {
+  "Medialuna": "Partidura media luna",
+  "Pedicelo bronceado": "Pedicelo deshidratado y/o pardo",
+  "Frutos dobles": "Fruto doble",
+  "Fruta light": "Falta de color"
+};

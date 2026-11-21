@@ -12,6 +12,20 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="estilos.css">
+<style>
+.grp{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-weight:800;font-size:.95rem;border-top:1px solid var(--line)}
+.grp:first-child{border-top:0}
+.grp.cond{background:var(--bad-soft);color:var(--magenta)}
+.grp.cal{background:var(--warn-soft);color:var(--warn)}
+.grp span:last-child{font-variant-numeric:tabular-nums;font-weight:600;font-size:.88rem}
+.kpi.warnk{background:var(--warn-soft)}
+.kpi.warnk .v{color:var(--warn)}
+.kpi.good.wide{grid-column:1/-1;display:flex;align-items:baseline;justify-content:space-between}
+.row{grid-template-columns:1fr auto 2.9rem;gap:8px;padding:6px 10px 6px 14px}
+.row .name{overflow-wrap:break-word;word-break:normal;hyphens:auto;font-size:.95rem;line-height:1.25}
+.stepper button{width:40px;height:40px}
+.stepper input{width:2.9rem}
+</style>
 </head>
 <body>
 <header>
@@ -59,10 +73,11 @@
     <h2>Resultado</h2>
     <div class="card">
       <div class="big">
-        <div class="kpi bad"><div class="v" id="pctDef">0%</div><div class="l">Defectos</div></div>
-        <div class="kpi good"><div class="v" id="pctExp">0%</div><div class="l">Exportable</div></div>
+        <div class="kpi good wide"><div class="v" id="pctExp">0%</div><div class="l" id="expTxt">Exportable</div></div>
+        <div class="kpi bad"><div class="v" id="pctCond">0%</div><div class="l">Condición</div></div>
+        <div class="kpi warnk"><div class="v" id="pctCal">0%</div><div class="l">Calidad</div></div>
       </div>
-      <div class="bar" aria-hidden="true"><span id="barDef" style="background:var(--magenta);width:0"></span><span id="barExp" style="background:var(--ok);width:0"></span></div>
+      <div class="bar" aria-hidden="true"><span id="barCond" style="background:var(--magenta);width:0"></span><span id="barCal" style="background:var(--warn);width:0"></span><span id="barExp" style="background:var(--ok);width:0"></span></div>
       <div class="total"><span>Total muestra <b id="totalTxt">0 frutos</b></span><span class="chip no" id="saveChip">Sin enviar</span></div>
     </div>
   </section>
@@ -86,7 +101,7 @@
 <div class="toast" id="toast" role="status"></div>
 
 <script type="module">
-import { DEFECTOS } from "./config.js";
+import { DEFECTOS, DEFECTOS_CALIDAD, RENOMBRES } from "./config.js";
 import { $, toast, today, nowTime, pct, fmt, fmtDate, esc, loadImg, downloadBlob, initFirebase, setupIcon, fillSelect, COLECCION, catalogoLocal, loadCatalogo } from "./comun.js";
 
 setupIcon("Frutea Control de defectos", "Defectos");
@@ -120,15 +135,20 @@ async function saveToDb(id, data, isNew) {
 
 // ===================== ESTADO =====================
 const KEY = "frutea-defectos-v1";
-let state = { info: { productor: "", cuartel: "", variedad: "", fecha: "", evaluador: "" }, defects: DEFECTOS.map(n => ({ name: n, n: 0, custom: false })), exportable: 0, photo: null, sampleId: null, savedHash: null, everSaved: false, hora: null };
+const GRUPO = n => DEFECTOS_CALIDAD.includes(n) ? "cal" : "cond";
+let state = { info: { productor: "", cuartel: "", variedad: "", fecha: "", evaluador: "" }, defects: [], exportable: 0, photo: null, sampleId: null, savedHash: null, everSaved: false, hora: null };
 try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s && s.defects) state = Object.assign(state, s); } catch (e) { }
 state.photo = null;
-state.defects.forEach(d => { if (!d.custom && d.name === "Fruta light") d.name = "Falta de color"; });
+// Arma la lista oficial (condición + calidad) y traspasa los conteos guardados,
+// aplicando los cambios de nombre. Los defectos propios con conteo se conservan.
 {
-  const fixed = DEFECTOS.map(n => state.defects.find(d => !d.custom && d.name === n) || { name: n, n: 0, custom: false });
-  const extra = state.defects.filter(d => d.custom || !DEFECTOS.includes(d.name));
-  extra.forEach(d => { if (!d.custom && !DEFECTOS.includes(d.name)) d.custom = true; });
-  state.defects = fixed.concat(extra.filter(d => !(d.custom && DEFECTOS.includes(d.name.trim()))));
+  const prev = state.defects || [], acc = {}, extras = [];
+  prev.forEach(d => {
+    const nm = (RENOMBRES[(d.name || "").trim()] || d.name || "").trim();
+    if (DEFECTOS.includes(nm)) acc[nm] = (acc[nm] || 0) + (+d.n || 0);
+    else if (d.custom ? nm : (+d.n || 0) > 0) extras.push({ name: d.name, n: +d.n || 0, custom: true, g: d.g || "cond" });
+  });
+  state.defects = DEFECTOS.map(n => ({ name: n, n: acc[n] || 0, custom: false, g: GRUPO(n) })).concat(extras);
 }
 if (!CAT.productores.includes(state.info.productor)) state.info.productor = "";
 if (!state.info.fecha) state.info.fecha = today();
@@ -186,7 +206,12 @@ async function refreshCatalogo() {
 
 // ===================== CONTEO =====================
 const list = $("list");
-function totals() { const def = state.defects.reduce((a, d) => a + (+d.n || 0), 0); const exp = +state.exportable || 0; return { def, exp, total: def + exp }; }
+function totals() {
+  let cond = 0, cal = 0;
+  state.defects.forEach(d => { const v = +d.n || 0; if (d.g === "cal") cal += v; else cond += v; });
+  const exp = +state.exportable || 0, def = cond + cal;
+  return { cond, cal, def, exp, total: def + exp };
+}
 function stepper(get, set) {
   const w = document.createElement("div"); w.className = "stepper";
   const minus = document.createElement("button"); minus.type = "button"; minus.textContent = "−"; minus.setAttribute("aria-label", "Restar");
@@ -198,13 +223,18 @@ function stepper(get, set) {
   inp.onfocus = () => inp.select();
   w.append(minus, inp, plus); return w;
 }
+const GRUPOS = [["cond", "Condición"], ["cal", "Calidad"]];
 function render() {
   list.innerHTML = "";
+  GRUPOS.forEach(([g, titulo]) => {
+  const h = document.createElement("div"); h.className = "grp " + g;
+  h.innerHTML = `<span>${titulo}</span><span id="gt-${g}">0 · 0%</span>`; list.appendChild(h);
   state.defects.forEach((d, i) => {
+    if (d.g !== g) return;
     const r = document.createElement("div"); r.className = "row";
     const nm = document.createElement("div"); nm.className = "name";
     if (d.custom) {
-      const ni = document.createElement("input"); ni.type = "text"; ni.value = d.name; ni.placeholder = "Nombre del defecto";
+      const ni = document.createElement("input"); ni.type = "text"; ni.value = d.name; ni.placeholder = "Nombre del defecto"; ni.dataset.g = d.g;
       ni.oninput = () => { d.name = ni.value; update(); };
       const del = document.createElement("button"); del.className = "del"; del.type = "button"; del.textContent = "Quitar";
       del.onclick = () => { state.defects.splice(i, 1); render(); };
@@ -213,9 +243,10 @@ function render() {
     const p = document.createElement("div"); p.className = "pct"; p.dataset.idx = i;
     r.append(nm, stepper(() => +d.n || 0, v => { d.n = v; }), p); list.appendChild(r);
   });
-  const add = document.createElement("button"); add.type = "button"; add.className = "btn add"; add.textContent = "+ Agregar defecto";
-  add.onclick = () => { state.defects.push({ name: "", n: 0, custom: true }); render(); const ins = list.querySelectorAll(".name input"); ins[ins.length - 1].focus(); };
+  const add = document.createElement("button"); add.type = "button"; add.className = "btn add"; add.textContent = `+ Agregar defecto de ${titulo.toLowerCase()}`;
+  add.onclick = () => { state.defects.push({ name: "", n: 0, custom: true, g }); render(); const ins = list.querySelectorAll(`.grp.${g} ~ .row .name input`); const last = [...list.querySelectorAll(".name input")].filter(x => x.dataset.g === g).pop(); (last || ins[ins.length - 1])?.focus(); };
   list.appendChild(add);
+  });
   const r = document.createElement("div"); r.className = "row export";
   const nm = document.createElement("div"); nm.className = "name"; nm.textContent = "Exportable (sanos)";
   const p = document.createElement("div"); p.className = "pct"; p.id = "pctExpRow";
@@ -223,13 +254,15 @@ function render() {
   update();
 }
 function sampleData() {
-  const t = totals(), defectos = {};
-  state.defects.forEach(d => { const nm = d.name.trim() || (+d.n ? "Otro defecto" : ""); if (!nm) return; defectos[nm] = (defectos[nm] || 0) + (+d.n || 0); });
+  const t = totals(), defectos = {}, grupos = {};
+  state.defects.forEach(d => { const nm = d.name.trim() || (+d.n ? "Otro defecto" : ""); if (!nm) return; defectos[nm] = (defectos[nm] || 0) + (+d.n || 0); grupos[nm] = d.g === "cal" ? "calidad" : "condicion"; });
   return {
     productor: state.info.productor, cuartel: state.info.cuartel.trim(), variedad: state.info.variedad.trim(),
     fecha: state.info.fecha || today(), evaluador: state.info.evaluador.trim(),
-    defectos, exportable: t.exp, totalDefectos: t.def, total: t.total,
-    pctExportable: Math.round(pct(t.exp, t.total) * 100) / 100, pctDefectos: Math.round(pct(t.def, t.total) * 100) / 100
+    defectos, grupos, exportable: t.exp, totalDefectos: t.def, total: t.total,
+    condicion: t.cond, calidad: t.cal,
+    pctExportable: Math.round(pct(t.exp, t.total) * 100) / 100, pctDefectos: Math.round(pct(t.def, t.total) * 100) / 100,
+    pctCondicion: Math.round(pct(t.cond, t.total) * 100) / 100, pctCalidad: Math.round(pct(t.cal, t.total) * 100) / 100
   };
 }
 const hashOf = d => JSON.stringify(d);
@@ -237,8 +270,12 @@ function update() {
   const t = totals();
   list.querySelectorAll(".pct[data-idx]").forEach(el => { const d = state.defects[+el.dataset.idx]; if (d) el.textContent = fmt(pct(+d.n || 0, t.total)); });
   const pe = $("pctExpRow"); if (pe) pe.textContent = fmt(pct(t.exp, t.total));
-  $("pctDef").textContent = fmt(pct(t.def, t.total)); $("pctExp").textContent = fmt(pct(t.exp, t.total));
-  $("barDef").style.width = pct(t.def, t.total) + "%"; $("barExp").style.width = pct(t.exp, t.total) + "%";
+  $("pctExp").textContent = fmt(pct(t.exp, t.total)); $("expTxt").textContent = `Exportable · ${t.exp} de ${t.total}`;
+  $("pctCond").textContent = fmt(pct(t.cond, t.total)); $("pctCal").textContent = fmt(pct(t.cal, t.total));
+  $("barCond").style.width = pct(t.cond, t.total) + "%"; $("barCal").style.width = pct(t.cal, t.total) + "%"; $("barExp").style.width = pct(t.exp, t.total) + "%";
+  const gc = $("gt-cond"), gl = $("gt-cal");
+  if (gc) gc.textContent = `${t.cond} · ${fmt(pct(t.cond, t.total))}`;
+  if (gl) gl.textContent = `${t.cal} · ${fmt(pct(t.cal, t.total))}`;
   $("totalTxt").textContent = t.total + (t.total === 1 ? " fruto" : " frutos");
   const chip = $("saveChip");
   if (!state.everSaved) { chip.className = "chip no"; chip.textContent = "Sin enviar"; }
@@ -335,14 +372,18 @@ async function buildReport() {
   const brand = await loadImg(document.querySelector(".brandlogo").src);
   const photo = state.photo ? await loadImg(state.photo) : null;
   const photoH = photo ? Math.min(860, Math.round((W - 2 * P) * photo.naturalHeight / photo.naturalWidth)) : 0;
-  // En la ficha solo van los defectos encontrados (cantidad > 0), de mayor a menor
-  const defRows = state.defects.filter(d => (+d.n || 0) > 0).map(d => ({ name: d.name.trim() || "Otro defecto", n: +d.n, exp: false })).sort((a, b) => b.n - a.n);
-  if (!defRows.length) defRows.push({ name: "Sin defectos", n: 0, exp: false, none: true });
-  const rows = [...defRows, { name: "Exportable (sanos)", n: t.exp, exp: true }];
-  const rowH = 64;
-  const infoItems = [["Productor", state.info.productor], ["Huerto / cuartel", state.info.cuartel], ["Variedad", state.info.variedad], ["Fecha", fmtDate(state.info.fecha)], ["Evaluador", state.info.evaluador]].filter(a => a[1]);
+  // Solo defectos encontrados, agrupados y de mayor a menor dentro de cada grupo
+  const found = g => state.defects.filter(d => d.g === g && (+d.n || 0) > 0).map(d => ({ name: d.name.trim() || "Otro defecto", n: +d.n })).sort((a, b) => b.n - a.n);
+  const groups = [
+    { key: "cond", title: "Condición", n: t.cond, rows: found("cond"), bg: "#FBE4EC", fg: "#8E0B4C" },
+    { key: "cal", title: "Calidad", n: t.cal, rows: found("cal"), bg: "#FFF1D6", fg: "#6B4600" }
+  ].filter(g => g.rows.length);
+  const principal = [...groups.flatMap(g => g.rows)].sort((a, b) => b.n - a.n)[0];
+  const rowH = 62, headH = 64;
+  const infoItems = [["Productor", state.info.productor], ["Huerto / cuartel", state.info.cuartel], ["Variedad", state.info.variedad], ["Fecha y hora", fmtDate(state.info.fecha) + (state.hora ? " · " + state.hora : "")], ["Evaluador", state.info.evaluador]].filter(a => a[1]);
   const infoH = Math.ceil(infoItems.length / 2) * 78;
-  const H = 170 + P + infoH + (infoItems.length ? 24 : 0) + (photo ? photoH + 40 : 0) + 70 + rowH * (rows.length + 1) + 40 + 190 + 90;
+  const tableH = groups.reduce((a, g) => a + headH + 8 + g.rows.length * rowH, 0) + (groups.length ? 0 : rowH) + rowH * 2 + 20;
+  const H = 170 + P + infoH + (infoItems.length ? 24 : 0) + (photo ? photoH + 40 : 0) + 150 + 18 + 160 + 30 + (principal ? 84 : 0) + 70 + tableH + 90;
   const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d");
   x.fillStyle = "#FFFFFF"; x.fillRect(0, 0, W, H);
   x.fillStyle = "#B80F63"; x.fillRect(0, 0, W, 170);
@@ -362,31 +403,55 @@ async function buildReport() {
     const s = Math.max(w / photo.naturalWidth, photoH / photo.naturalHeight), dw = photo.naturalWidth * s, dh = photo.naturalHeight * s;
     x.drawImage(photo, P + (w - dw) / 2, y + (photoH - dh) / 2, dw, dh); x.restore(); y += photoH + 40;
   }
+  // Exportable (ancho completo)
+  x.fillStyle = "#E5F2E6"; rr(x, P, y, W - 2 * P, 150, 20); x.fill();
+  x.fillStyle = "#2F7A3E"; x.font = `800 96px ${F}`; x.fillText(fmt(pct(t.exp, t.total)), P + 30, y + 104);
+  x.textAlign = "right"; x.font = `600 34px ${F}`; x.fillText("Exportable", W - P - 30, y + 66);
+  x.fillStyle = "#4F7A57"; x.font = `400 26px ${F}`; x.fillText(`${t.exp} de ${t.total} frutos`, W - P - 30, y + 108); x.textAlign = "left";
+  y += 150 + 18;
+  // Condición y Calidad
   const bw = (W - 2 * P - 24) / 2;
-  [[fmt(pct(t.def, t.total)), "Defectos", `${t.def} de ${t.total} frutos`, "#FBE4EC", "#B80F63"], [fmt(pct(t.exp, t.total)), "Exportable", `${t.exp} de ${t.total} frutos`, "#E5F2E6", "#2F7A3E"]].forEach((k, i) => {
-    const X = P + i * (bw + 24); x.fillStyle = k[3]; rr(x, X, y, bw, 170, 20); x.fill();
-    x.fillStyle = k[4]; x.font = `800 84px ${F}`; x.fillText(k[0], X + 28, y + 96);
-    x.fillStyle = "#24131B"; x.font = `600 30px ${F}`; x.fillText(k[1], X + 28, y + 136);
-    x.fillStyle = "#7A6670"; x.font = `400 24px ${F}`; x.textAlign = "right"; x.fillText(k[2], X + bw - 24, y + 136); x.textAlign = "left";
+  [[t.cond, "Condición", "#FBE4EC", "#B80F63"], [t.cal, "Calidad", "#FFF1D6", "#9A6200"]].forEach((k, i) => {
+    const X = P + i * (bw + 24); x.fillStyle = k[2]; rr(x, X, y, bw, 160, 20); x.fill();
+    x.fillStyle = k[3]; x.font = `800 76px ${F}`; x.fillText(fmt(pct(k[0], t.total)), X + 28, y + 90);
+    x.fillStyle = "#24131B"; x.font = `600 30px ${F}`; x.fillText(k[1], X + 28, y + 132);
+    x.fillStyle = "#7A6670"; x.font = `400 24px ${F}`; x.textAlign = "right"; x.fillText(`${k[0]} frutos`, X + bw - 24, y + 132); x.textAlign = "left";
   });
-  y += 210;
+  y += 160 + 30;
+  if (principal) {
+    x.fillStyle = "#FBE4EC"; rr(x, P, y, W - 2 * P, 64, 14); x.fill();
+    x.fillStyle = "#8E0B4C"; x.font = `600 30px ${F}`; x.textBaseline = "middle";
+    x.fillText(clip(x, `Defecto principal: ${principal.name.toLowerCase()} (${fmt(pct(principal.n, t.total))})`, W - 2 * P - 48), P + 24, y + 33);
+    x.textBaseline = "alphabetic"; y += 84;
+  }
   x.fillStyle = "#5C0B30"; x.font = `800 36px ${F}`; x.fillText("Detalle de la muestra", P, y + 36); y += 70;
-  const cx = [P + 24, P + 560, W - P - 24];
-  x.fillStyle = "#F8E7EF"; rr(x, P, y, W - 2 * P, rowH, 14); x.fill();
-  x.fillStyle = "#5C0B30"; x.font = `600 28px ${F}`; x.textBaseline = "middle";
-  x.fillText("Categoría", cx[0], y + rowH / 2); x.textAlign = "right"; x.fillText("Cantidad", cx[1] + 80, y + rowH / 2); x.fillText("Porcentaje", cx[2], y + rowH / 2); x.textAlign = "left";
-  y += rowH;
-  rows.forEach(r => {
-    if (r.exp) { x.fillStyle = "#E5F2E6"; x.fillRect(P, y, W - 2 * P, rowH); }
-    x.strokeStyle = "#EADDE3"; x.lineWidth = 2; x.beginPath(); x.moveTo(P, y); x.lineTo(W - P, y); x.stroke();
-    x.fillStyle = r.exp ? "#2F7A3E" : "#24131B"; x.font = `${r.exp ? 600 : 400} 30px ${F}`;
-    x.fillText(clip(x, r.name, 480), cx[0], y + rowH / 2); x.textAlign = "right";
-    x.font = `600 30px ${F}`; x.fillText(r.none ? "—" : String(r.n), cx[1] + 80, y + rowH / 2); x.fillText(r.none ? "—" : fmt(pct(r.n, t.total)), cx[2], y + rowH / 2); x.textAlign = "left";
-    y += rowH;
+  const cx = [P + 24, P + 640, W - P - 24];
+  x.textBaseline = "middle";
+  groups.forEach(g => {
+    x.fillStyle = g.bg; rr(x, P, y, W - 2 * P, headH, 14); x.fill();
+    x.fillStyle = g.fg; x.font = `800 30px ${F}`; x.fillText(g.title, cx[0], y + headH / 2);
+    x.textAlign = "right"; x.font = `600 28px ${F}`; x.fillText(`${g.n} · ${fmt(pct(g.n, t.total))}`, cx[2], y + headH / 2); x.textAlign = "left";
+    y += headH + 8;
+    g.rows.forEach(r => {
+      x.fillStyle = "#24131B"; x.font = `400 30px ${F}`; x.fillText(clip(x, r.name, 560), cx[0], y + rowH / 2);
+      x.textAlign = "right"; x.font = `600 30px ${F}`; x.fillText(String(r.n), cx[1], y + rowH / 2); x.fillText(fmt(pct(r.n, t.total)), cx[2], y + rowH / 2); x.textAlign = "left";
+      y += rowH;
+      x.strokeStyle = "#EADDE3"; x.lineWidth = 2; x.beginPath(); x.moveTo(P, y); x.lineTo(W - P, y); x.stroke();
+    });
   });
+  if (!groups.length) {
+    x.fillStyle = "#24131B"; x.font = `400 30px ${F}`; x.fillText("Sin defectos", cx[0], y + rowH / 2);
+    x.textAlign = "right"; x.fillText("—", cx[1], y + rowH / 2); x.fillText("—", cx[2], y + rowH / 2); x.textAlign = "left"; y += rowH;
+  }
+  y += 10;
+  x.fillStyle = "#E5F2E6"; x.fillRect(P, y, W - 2 * P, rowH);
+  x.fillStyle = "#2F7A3E"; x.font = `600 30px ${F}`; x.fillText("Exportable (sanos)", cx[0], y + rowH / 2);
+  x.textAlign = "right"; x.fillText(String(t.exp), cx[1], y + rowH / 2); x.fillText(fmt(pct(t.exp, t.total)), cx[2], y + rowH / 2); x.textAlign = "left";
+  y += rowH;
   x.strokeStyle = "#24131B"; x.lineWidth = 3; x.beginPath(); x.moveTo(P, y); x.lineTo(W - P, y); x.stroke();
-  x.fillStyle = "#24131B"; x.font = `800 30px ${F}`; x.fillText("Total muestra", cx[0], y + rowH / 2 + 4); x.textAlign = "right"; x.fillText(String(t.total), cx[1] + 80, y + rowH / 2 + 4); x.fillText("100%", cx[2], y + rowH / 2 + 4); x.textAlign = "left";
-  y += rowH + 20;
+  x.fillStyle = "#24131B"; x.font = `800 30px ${F}`; x.fillText("Total muestra", cx[0], y + rowH / 2 + 4);
+  x.textAlign = "right"; x.fillText(String(t.total), cx[1], y + rowH / 2 + 4); x.fillText("100%", cx[2], y + rowH / 2 + 4); x.textAlign = "left";
+  y += rowH + 10;
   x.textBaseline = "alphabetic";
   x.fillStyle = "#7A6670"; x.font = `400 22px ${F}`; x.fillText("Generado con Frutea · Control de defectos", P, y + 40);
   reportName = ["Defectos", state.info.productor, state.info.cuartel, state.info.fecha].filter(Boolean).join("_").replace(/[^\wáéíóúñÁÉÍÓÚÑ\-]+/g, "-") + ".png";
@@ -399,7 +464,7 @@ $("btnShare").onclick = async () => {
   if (!reportBlob) return;
   const file = new File([reportBlob], reportName, { type: "image/png" });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: "Control de defectos", text: `Defectos ${$("pctDef").textContent} · Exportable ${$("pctExp").textContent}` }); }
+    try { await navigator.share({ files: [file], title: "Control de defectos", text: `Exportable ${$("pctExp").textContent} · Condición ${$("pctCond").textContent} · Calidad ${$("pctCal").textContent}` }); }
     catch (e) { if (e && e.name !== "AbortError") toast("No se pudo compartir."); }
   } else toast("Compartir no está disponible aquí. Usa Guardar imagen.");
 };
